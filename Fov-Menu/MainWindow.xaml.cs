@@ -114,6 +114,6 @@ public partial class MainWindow
 
     private void UIElement_OnMouseDown(object sender, MouseButtonEventArgs e)
     {
-        Environment.Exit(0);
+        Close();
     }
 }
