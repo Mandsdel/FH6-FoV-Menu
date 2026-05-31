@@ -6,7 +6,7 @@ A small tool written in c# to change the limits of fov
 
 <h2 align="center">Requirements</h2>
 
-Requires .NET 7
+Requires .NET 8
 
 <h2 align="center">Features</h2>
 
@@ -23,10 +23,6 @@ Requires .NET 7
 2. Manually adjust the FOV settings to your preference.
 
 3. Once satisfied with the FOV configuration, save the settings as a profile for easy access later.
-
-<h2 align="center">Screenshots</h2>
-
-![Screenshot](/Images/Screenshot.png)
 
 <h2 align="center">Disclaimer</h2>
 
