@@ -1,13 +1,13 @@
-﻿using System;
-using System.Linq;
-using System.Reflection;
-using System.Threading.Tasks;
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Memory;
 
 namespace Fov_Menu;
 
-public class Addresses
+public class Addresses : IDisposable
 {
     private readonly MainWindow _mainWindow;
     private readonly Mem _mem = new()
@@ -16,7 +16,8 @@ public class Addresses
     };
 
     private bool _attached;
-    
+    private volatile bool _isUpdating;
+
     private UIntPtr _chaseMin;
     private UIntPtr _chaseMax;
     private UIntPtr _farChaseMin;
@@ -27,29 +28,44 @@ public class Addresses
     private UIntPtr _hoodMax;
     private UIntPtr _bumperMin;
     private UIntPtr _bumperMax;
+
     private Dictionary<string, UIntPtr> _addressMap = new(StringComparer.OrdinalIgnoreCase);
 
     public Addresses(MainWindow mainWindow)
     {
         _mainWindow = mainWindow;
     }
-    
-    public async Task OpenGameProcess()
-    {
-        while (true)
-        {
-            await Task.Delay(_attached ? 1000 : 500);
-            var isGameProcessOpened = _mem.OpenProcess("ForzaHorizon6") || _mem.OpenProcess("ForzaHorizon5") || _mem.OpenProcess("ForzaHorizon4");
 
-            if (!_attached && isGameProcessOpened)
+    public async Task OpenGameProcess(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
             {
-                AddressesScan();
-                _attached = true;
+                try
+                {
+                    await Task.Delay(_attached ? 1000 : 500, token);
+                }
+                catch (TaskCanceledException) { break; }
+
+                var isGameProcessOpened = _mem.OpenProcess("ForzaHorizon6") || _mem.OpenProcess("ForzaHorizon5") || _mem.OpenProcess("ForzaHorizon4");
+
+                if (!_attached && isGameProcessOpened)
+                {
+                    AddressesScan();
+                    _attached = true;
+                    Logger.LogInfo("Attached to Forza process and scanned addresses.");
+                }
+                else if (_attached && !isGameProcessOpened)
+                {
+                    _attached = false;
+                    Logger.LogInfo("Detached from Forza process.");
+                }
             }
-            else if (_attached && !isGameProcessOpened)
-            {
-                _attached = false;
-            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("OpenGameProcess terminated with exception", ex);
         }
     }
 
@@ -61,6 +77,7 @@ public class Addresses
 
         if (!bases1.Any() || !bases2.Any() || foundBase3 == UIntPtr.Zero)
         {
+            Logger.LogInfo("Signature scan did not find expected patterns; skipping address setup.");
             return;
         }
 
@@ -80,67 +97,81 @@ public class Addresses
         _hoodMin = (UIntPtr)(last2.ToUInt64() - 0x20 - 4);
         _hoodMax = (UIntPtr)(last2.ToUInt64() - 0x20);
 
-        // Cache address lookup to avoid reflection on each write
-        _addressMap = new Dictionary<string, UIntPtr>(StringComparer.OrdinalIgnoreCase);
-        // Build map using reflection for robustness
-        var fields = typeof(Addresses).GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(f => f.FieldType == typeof(UIntPtr));
-        foreach (var field in fields)
+        _addressMap = new Dictionary<string, UIntPtr>(StringComparer.OrdinalIgnoreCase)
         {
-            var key = field.Name.StartsWith("_") ? field.Name.Substring(1) : field.Name;
-            _addressMap[key] = (UIntPtr)(field.GetValue(this) ?? UIntPtr.Zero);
-        }
+            ["ChaseMin"] = _chaseMin,
+            ["ChaseMax"] = _chaseMax,
+            ["FarChaseMin"] = _farChaseMin,
+            ["FarChaseMax"] = _farChaseMax,
+            ["DriverMin"] = _driverMin,
+            ["DriverMax"] = _driverMax,
+            ["HoodMin"] = _hoodMin,
+            ["HoodMax"] = _hoodMax,
+            ["BumperMin"] = _bumperMin,
+            ["BumperMax"] = _bumperMax
+        };
 
         ReadValues();
     }
 
     private void ReadValues()
     {
+        if (_isUpdating) return;
+        _isUpdating = true;
+
         _mainWindow.Dispatcher.BeginInvoke((Action)delegate
         {
-            if (_chaseMin != UIntPtr.Zero)
-                _mainWindow.ChaseMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_chaseMin));
-            if (_chaseMax != UIntPtr.Zero)
-                _mainWindow.ChaseMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_chaseMax));
-            if (_farChaseMin != UIntPtr.Zero)
-                _mainWindow.FarChaseMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_farChaseMin));
-            if (_farChaseMax != UIntPtr.Zero)
-                _mainWindow.FarChaseMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_farChaseMax));
-            if (_driverMin != UIntPtr.Zero)
-                _mainWindow.DriverMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_driverMin));
-            if (_driverMax != UIntPtr.Zero)
-                _mainWindow.DriverMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_driverMax));
-            if (_hoodMin != UIntPtr.Zero)
-                _mainWindow.HoodMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_hoodMin));
-            if (_hoodMax != UIntPtr.Zero)
-                _mainWindow.HoodMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_hoodMax));
-            if (_bumperMin != UIntPtr.Zero)
-                _mainWindow.BumperMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_bumperMin));
-            if (_bumperMax != UIntPtr.Zero)
-                _mainWindow.BumperMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_bumperMax));
+            try
+            {
+                if (_chaseMin != UIntPtr.Zero)
+                    _mainWindow.ChaseMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_chaseMin));
+                if (_chaseMax != UIntPtr.Zero)
+                    _mainWindow.ChaseMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_chaseMax));
+                if (_farChaseMin != UIntPtr.Zero)
+                    _mainWindow.FarChaseMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_farChaseMin));
+                if (_farChaseMax != UIntPtr.Zero)
+                    _mainWindow.FarChaseMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_farChaseMax));
+                if (_driverMin != UIntPtr.Zero)
+                    _mainWindow.DriverMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_driverMin));
+                if (_driverMax != UIntPtr.Zero)
+                    _mainWindow.DriverMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_driverMax));
+                if (_hoodMin != UIntPtr.Zero)
+                    _mainWindow.HoodMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_hoodMin));
+                if (_hoodMax != UIntPtr.Zero)
+                    _mainWindow.HoodMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_hoodMax));
+                if (_bumperMin != UIntPtr.Zero)
+                    _mainWindow.BumperMin.Value = Convert.ToDouble(_mem.ReadMemory<float>(_bumperMin));
+                if (_bumperMax != UIntPtr.Zero)
+                    _mainWindow.BumperMax.Value = Convert.ToDouble(_mem.ReadMemory<float>(_bumperMax));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error reading memory values", ex);
+            }
+            finally
+            {
+                _isUpdating = false;
+            }
         });
     }
-        
 
     public void WriteValue(string buttonName, float value)
     {
-        if (!_attached)
-        {
+        if (!_attached || !_addressMap.TryGetValue(buttonName, out var address) || address == UIntPtr.Zero)
             return;
-        }
-        if (_addressMap != null && _addressMap.TryGetValue(buttonName, out var address) && address != UIntPtr.Zero)
-        {
-            _mem.WriteMemory(address, value);
-            return;
-        }
 
-        // Fallback: reflection-based lookup (one-time cost avoided by caching above)
-        var fields = typeof(Addresses).GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
-        address = (from field in fields.Where(f => f.FieldType == typeof(UIntPtr))
-                   where field.Name.IndexOf(buttonName, StringComparison.OrdinalIgnoreCase) >= 0
-                   select (UIntPtr)(field.GetValue(this) ?? UIntPtr.Zero)).FirstOrDefault();
-
-        if (address == UIntPtr.Zero) return;
         _mem.WriteMemory(address, value);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            _attached = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Error during Addresses.Dispose", ex);
+        }
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
@@ -10,6 +11,7 @@ namespace Fov_Menu;
 public partial class MainWindow
 {
     private readonly Addresses? _addresses;
+    private CancellationTokenSource? _cts;
     private const string FovSettingsFile = "fov_settings.json";
 
 
@@ -17,8 +19,10 @@ public partial class MainWindow
     {
         InitializeComponent();
         _addresses = new Addresses(this);
+        _cts = new CancellationTokenSource();
         AutoLoadFov();
-        _ = Task.Run(_addresses.OpenGameProcess);
+        _ = Task.Run(() => _addresses.OpenGameProcess(_cts.Token));
+        this.Closed += MainWindow_Closed;
     }
 
 
@@ -39,7 +43,11 @@ public partial class MainWindow
             var json = File.ReadAllText(FovSettingsFile);
             return JsonSerializer.Deserialize<FovSettings>(json);
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            Logger.LogError($"Failed to load settings from {FovSettingsFile}", ex);
+            return null;
+        }
     }
 
     private void ApplyFovSettings(FovSettings settings)
@@ -63,21 +71,11 @@ public partial class MainWindow
 
     private void NumericUpDown_OnValueChanged(object sender, RoutedPropertyChangedEventArgs<double?> e)
     {
-        if (_addresses == null)
-        {
+        if (_addresses == null || sender is not MahApps.Metro.Controls.NumericUpDown numericUpDown || numericUpDown.Value == null)
             return;
-        }
 
-        var numericUpDown = (MahApps.Metro.Controls.NumericUpDown)sender;
-
-        if (numericUpDown.Value == null)
-        {
-            return;
-        }
-
-        var numericUpDownName = numericUpDown.Name;
         var value = Convert.ToSingle(numericUpDown.Value);
-        _addresses.WriteValue(numericUpDownName, value);
+        _addresses.WriteValue(numericUpDown.Name, value);
     }
 
     private void SaveFov_Click(object sender, RoutedEventArgs e)
@@ -95,9 +93,17 @@ public partial class MainWindow
             BumperMin = BumperMin.Value ?? 0,
             BumperMax = BumperMax.Value ?? 0
         };
-        var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(FovSettingsFile, json);
-        MessageBox.Show("FOV settings saved!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+        try
+        {
+            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(FovSettingsFile, json);
+            MessageBox.Show("FOV settings saved!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Failed to save FOV settings", ex);
+            MessageBox.Show("Failed to save FOV settings. See log for details.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void LoadFov_Click(object sender, RoutedEventArgs e)
@@ -115,5 +121,11 @@ public partial class MainWindow
     private void UIElement_OnMouseDown(object sender, MouseButtonEventArgs e)
     {
         Close();
+    }
+
+    private void MainWindow_Closed(object? sender, EventArgs e)
+    {
+        _cts?.Cancel();
+        _addresses?.Dispose();
     }
 }

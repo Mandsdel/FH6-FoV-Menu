@@ -1,8 +1,5 @@
-using System;
-
 namespace Fov_Menu
 {
-    [Serializable]
     public class FovSettings
     {
         public double ChaseMin { get; set; }

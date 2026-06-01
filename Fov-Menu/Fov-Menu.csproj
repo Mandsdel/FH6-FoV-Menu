@@ -6,7 +6,6 @@
     <RootNamespace>Fov_Menu</RootNamespace>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>Resources\app.manifest</ApplicationManifest>
   </PropertyGroup>
 
@@ -29,6 +28,7 @@
   <ItemGroup>
     <Reference Include="Memory">
       <HintPath>Memory.dll</HintPath>
+      <Private>True</Private>
     </Reference>
   </ItemGroup>
 
